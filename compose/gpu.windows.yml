@@ -1,0 +1,42 @@
+# ============================================================================
+# compose/gpu.windows.yml
+# ----------------------------------------------------------------------------
+# Overlay de GPU para Docker Desktop no Windows (backend WSL2).
+#
+# IMPORTANTE: o passthrough de uma GPU ESPECÍFICA por container (device_ids)
+# não é confiável no Docker Desktop hoje — há relatos consistentes de que
+# apenas a primeira GPU é exposta ao WSL2/containers, ou de que device_ids
+# é simplesmente ignorado mesmo quando definido corretamente.
+#
+# Por isso, aqui os dois containers recebem acesso a TODAS as GPUs visíveis
+# (capabilities: [gpu], sem device_ids). O isolamento "uma GPU por modelo"
+# deixa de ser garantido pelo Docker e passa a depender do próprio Ollama
+# / do agendamento do driver. Na prática, com 2x GPUs pequenas (6GB) isso
+# tende a funcionar razoavelmente porque cada modelo ainda cabe inteiro em
+# uma única GPU e o driver normalmente não fragmenta um modelo pequeno
+# entre placas — mas não é uma garantia formal como no Linux.
+#
+# Veja docs/windows-gpu-notes.md para detalhes, testes de verificação, e
+# o que fazer se notar os dois modelos competindo pela mesma GPU.
+#
+# Usado automaticamente quando HOST_OS=windows no .env.
+# ============================================================================
+
+services:
+  ollama-gpu0:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  ollama-gpu1:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

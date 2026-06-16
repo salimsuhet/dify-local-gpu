@@ -1,0 +1,35 @@
+# ============================================================================
+# compose/gpu.linux.yml
+# ----------------------------------------------------------------------------
+# Overlay de GPU para Linux com NVIDIA Container Toolkit nativo.
+# Cada container Ollama é fixado a UMA GPU física distinta via device_ids,
+# garantindo isolamento real: o modelo de chat nunca disputa VRAM com o
+# modelo de embedding/rerank.
+#
+# Usado automaticamente quando HOST_OS=linux no .env.
+# ============================================================================
+
+services:
+  ollama-gpu0:
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${GPU0_DEVICE_INDEX:-0}
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU0_DEVICE_INDEX:-0}"]
+              capabilities: [gpu]
+
+  ollama-gpu1:
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${GPU1_DEVICE_INDEX:-1}
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU1_DEVICE_INDEX:-1}"]
+              capabilities: [gpu]
