@@ -97,6 +97,8 @@ GPU1_EMBED_MODEL=nomic-embed-text                 # GPU 1: embedding
 OLLAMA_GPU1_NUM_CTX=4096
 ```
 
+Outras opções por GPU (`OLLAMA_GPU0_*` / `OLLAMA_GPU1_*`): `NUM_PARALLEL` (requisições simultâneas), `MAX_LOADED_MODELS` (modelos carregados juntos na VRAM; padrão 1 na GPU 0 e 2 na GPU 1), além de `GPU0_DEVICE_INDEX` / `GPU1_DEVICE_INDEX` e `OLLAMA_VRAM_MARGIN_MIB`. Todas estão comentadas no [`.env.example`](.env.example).
+
 No Dify, a Base URL é sempre a mesma, em qualquer sistema:
 
 | Papel | Base URL no Dify |
@@ -114,6 +116,8 @@ Do host (scripts, testes, extensões de IDE), as mesmas instâncias ficam em `ht
 ```
 
 Papéis: `code` (GPU 0), `chat` e `embed` (GPU 1). Depois cadastre o novo modelo no Dify. Antes de adotar um modelo, confira a licença em [`docs/licencas.md`](docs/licencas.md) e o consumo de VRAM em [`docs/model-reference.md`](docs/model-reference.md).
+
+**GPUs maiores (8 a 24 GB):** o projeto funciona igual, só muda o `.env`. A seção "Máquinas com GPUs maiores" de [`docs/model-reference.md`](docs/model-reference.md) sugere modelo e contexto por tamanho de VRAM e traz um checklist do que atualizar ao trocar de máquina ou de modelo.
 
 ## Verificando as GPUs
 
@@ -162,11 +166,11 @@ dify-local-gpu/
 │   └── continue-config.yaml    # configuração do Continue (VS Code) para os Ollama locais
 ├── apps/
 │   └── assistente-de-codigo.yml # app pronto para importar no Dify (Estúdio → Importar DSL)
-├── scripts/                    # bootstrap, up, pull-models, switch-model, check-gpu-affinity (.sh e .ps1)
+├── scripts/                    # bootstrap, up, pull-models, switch-model, check-gpu-affinity, test-setup (.sh e .ps1)
 ├── docs/
 │   ├── dify-setup.md           # configurar o Dify e criar o assistente de código
 │   ├── vscode.md               # assistente dentro do VS Code (extensão Continue)
-│   ├── model-reference.md      # modelos de código/conversa/embedding que cabem em 6 GB
+│   ├── model-reference.md      # modelos por papel e por VRAM (6 GB testado; 8–24 GB estimado)
 │   ├── licencas.md             # licença de cada componente e modelo; uso em universidade
 │   ├── windows-gpu-notes.md    # como o isolamento de GPU funciona no Docker Desktop
 │   └── troubleshooting.md
@@ -176,7 +180,7 @@ dify-local-gpu/
 ## Limites desta configuração
 
 - **Qualidade:** modelos de 7B são bons para funções, scripts, explicações, testes e revisão de trechos. Ficam bem abaixo de modelos de nuvem em tarefas grandes (refatorar um projeto inteiro, arquitetura).
-- **Concorrência:** com `NUM_PARALLEL=1`, cada GPU atende uma requisição por vez; as demais esperam na fila. Na prática, 2 a 5 pessoas usando ao mesmo tempo com espera aceitável.
+- **Concorrência:** com `NUM_PARALLEL=1`, cada GPU atende uma requisição por vez; as demais esperam na fila. Na prática, 2 a 5 pessoas usando ao mesmo tempo com espera aceitável. Em placas com VRAM sobrando, aumente `OLLAMA_GPU*_NUM_PARALLEL` (cada requisição paralela reserva o próprio contexto).
 - **Rede:** tudo está preso a `127.0.0.1`. Para atender outras máquinas (ex: alunos de um laboratório), exponha **só o Dify**, com HTTPS e contas individuais — veja a seção de uso institucional em [`docs/licencas.md`](docs/licencas.md).
 
 ## Licença

@@ -36,7 +36,7 @@ services:
     environment:
       - OLLAMA_NUM_PARALLEL=${OLLAMA_GPU0_NUM_PARALLEL:-1}
       - OLLAMA_CONTEXT_LENGTH=${OLLAMA_GPU0_NUM_CTX:-8192}
-      - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_MAX_LOADED_MODELS=${OLLAMA_GPU0_MAX_LOADED_MODELS:-1}
       - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-30m}
       # Flash attention + KV cache em 8 bits: ~metade da VRAM do contexto
       - OLLAMA_FLASH_ATTENTION=1
@@ -67,7 +67,7 @@ services:
     environment:
       - OLLAMA_NUM_PARALLEL=${OLLAMA_GPU1_NUM_PARALLEL:-1}
       - OLLAMA_CONTEXT_LENGTH=${OLLAMA_GPU1_NUM_CTX:-4096}
-      - OLLAMA_MAX_LOADED_MODELS=2
+      - OLLAMA_MAX_LOADED_MODELS=${OLLAMA_GPU1_MAX_LOADED_MODELS:-2}
       - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-30m}
       # Flash attention + KV cache em 8 bits: ~metade da VRAM do contexto
       - OLLAMA_FLASH_ATTENTION=1

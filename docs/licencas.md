@@ -52,7 +52,11 @@ A licença vale **por tamanho**: dentro da mesma família, tamanhos diferentes p
 | Modelo | Papel | Licença | Status |
 |---|---|---|---|
 | `qwen2.5-coder:0.5b` / `1.5b` / `14b` / `32b` | código | Apache 2.0 | ✅ |
+| `qwen3-coder:30b` | código (GPUs de 24 GB) | Apache 2.0 | ✅ |
+| `devstral:24b` (Mistral) | código / modo Agent (GPUs de 24 GB) | Apache 2.0 | ✅ |
 | `granite-code:3b` / `8b` (IBM) | código | Apache 2.0 | ✅ |
+| `qwen2.5:14b` / `32b` | conversa | Apache 2.0 | ✅ |
+| `mistral-small:24b` | conversa (GPUs de 24 GB) | Apache 2.0 | ✅ |
 | `granite3.3:2b` / `8b` (IBM) | conversa | Apache 2.0 | ✅ |
 | `mistral:7b` | conversa | Apache 2.0 | ✅ |
 | `phi4-mini` (Microsoft) | conversa | MIT | ✅ |
