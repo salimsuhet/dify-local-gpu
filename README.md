@@ -158,11 +158,14 @@ dify-local-gpu/
 │   ├── gpu.linux.yml           # isolamento por device_ids (Docker)
 │   └── gpu.windows.yml         # isolamento por CUDA_VISIBLE_DEVICES (Docker Desktop)
 ├── .env.example
+├── ide/
+│   └── continue-config.yaml    # configuração do Continue (VS Code) para os Ollama locais
 ├── apps/
 │   └── assistente-de-codigo.yml # app pronto para importar no Dify (Estúdio → Importar DSL)
 ├── scripts/                    # bootstrap, up, pull-models, switch-model, check-gpu-affinity (.sh e .ps1)
 ├── docs/
 │   ├── dify-setup.md           # configurar o Dify e criar o assistente de código
+│   ├── vscode.md               # assistente dentro do VS Code (extensão Continue)
 │   ├── model-reference.md      # modelos de código/conversa/embedding que cabem em 6 GB
 │   ├── licencas.md             # licença de cada componente e modelo; uso em universidade
 │   ├── windows-gpu-notes.md    # como o isolamento de GPU funciona no Docker Desktop

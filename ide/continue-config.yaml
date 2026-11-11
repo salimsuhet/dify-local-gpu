@@ -1,0 +1,60 @@
+# Configuração do Continue (extensão VS Code / JetBrains, Apache 2.0)
+# apontando para os Ollama locais deste projeto.
+#
+# Instalação: copie para ~/.continue/config.yaml
+#   Windows:  Copy-Item ide\continue-config.yaml $env:USERPROFILE\.continue\config.yaml
+#   Linux:    cp ide/continue-config.yaml ~/.continue/config.yaml
+# Detalhes: docs/vscode.md
+name: Local (dify-local-gpu)
+version: 1.0.0
+schema: v1
+
+models:
+  # GPU 0 — código: chat, edição inline, aplicar mudanças e autocompletar
+  - name: Qwen2.5-Coder 7B (GPU0)
+    provider: ollama
+    model: qwen2.5-coder:7b-instruct-q4_K_M
+    apiBase: http://localhost:11434
+    roles: [chat, edit, apply, autocomplete]
+    defaultCompletionOptions:
+      contextLength: 8192
+      maxTokens: 2048
+      temperature: 0.2
+    autocompleteOptions:
+      debounceDelay: 400
+      maxPromptTokens: 1024
+
+  # GPU 1 — conversa geral (explicar conceitos, perguntas que não são código)
+  - name: Qwen2.5 7B (GPU1)
+    provider: ollama
+    model: qwen2.5:7b-instruct-q4_K_M
+    apiBase: http://localhost:11435
+    roles: [chat]
+    defaultCompletionOptions:
+      contextLength: 4096
+      maxTokens: 1024
+
+  # GPU 1 — embedding para indexar o projeto (@Codebase)
+  - name: Nomic Embed (GPU1)
+    provider: ollama
+    model: nomic-embed-text
+    apiBase: http://localhost:11435
+    roles: [embed]
+
+# O que pode ser anexado ao chat com "@"
+context:
+  - provider: currentFile
+  - provider: file
+  - provider: code
+  - provider: diff
+  - provider: terminal
+  - provider: problems
+  - provider: folder
+  - provider: codebase
+
+rules:
+  - Responda sempre em português do Brasil; mantenha código, nomes, mensagens de erro e comandos no idioma original.
+  - Vá direto ao ponto: comece pelo código ou pela resposta e explique só o necessário.
+  - Ao alterar código existente, mostre apenas o trecho alterado com contexto suficiente para localizá-lo.
+  - Se não tiver certeza de que uma API, função ou flag existe, diga isso em vez de inventar.
+  - Você é o Qwen2.5-Coder 7B rodando localmente via Ollama na GPU do usuário; não tem acesso à internet e só vê o que for anexado à conversa.

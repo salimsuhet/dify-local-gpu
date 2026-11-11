@@ -149,27 +149,9 @@ Implementa a ideia "um modelo interpreta, outro gera código", numa interface s�
 
 O classificador roda na GPU 1, então não disputa VRAM com o modelo de código.
 
-## 8. (Opcional) Usar os modelos direto no editor
+## 8. (Opcional) Usar os modelos direto no VS Code
 
-O Dify é a interface de chat. Para autocompletar e editar código dentro do VS Code ou JetBrains, a extensão [Continue](https://github.com/continuedev/continue) (Apache 2.0) pode apontar direto para os mesmos Ollama, sem passar pelo Dify:
-
-```yaml
-# ~/.continue/config.yaml
-name: Local
-version: 1.0.0
-schema: v1
-models:
-  - name: Qwen2.5-Coder 7B (GPU0)
-    provider: ollama
-    model: qwen2.5-coder:7b-instruct-q4_K_M
-    apiBase: http://localhost:11434
-    roles: [chat, edit, apply]
-  - name: Nomic Embed (GPU1)
-    provider: ollama
-    model: nomic-embed-text
-    apiBase: http://localhost:11435
-    roles: [embed]
-```
+Para programar dentro do editor (chat sobre o arquivo aberto, edição inline, autocompletar), use a extensão Continue apontando para os mesmos Ollama — guia completo em [`vscode.md`](vscode.md), configuração pronta em [`ide/continue-config.yaml`](../ide/continue-config.yaml).
 
 ## Teste rápido
 

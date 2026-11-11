@@ -17,6 +17,7 @@ Legenda: ✅ permissiva, sem condições relevantes · ⚠️ permitido com cond
 | Nginx | BSD-2-Clause | ✅ | |
 | Squid (proxy SSRF do Dify) | GPLv2 | ✅ | usado sem modificação, como serviço separado: sem obrigação adicional |
 | Docker Engine / Compose | Apache 2.0 | ✅ | |
+| Continue (extensão VS Code/JetBrains, opcional) | Apache 2.0 | ✅ | desligue a telemetria (`continue.telemetryEnabled: false`) para manter tudo local |
 | Docker Desktop | Licença comercial da Docker | ⚠️ | Gratuito para educação e organizações pequenas; empresas com 250+ funcionários **ou** receita anual acima de US$ 10 mi precisam de assinatura. Alternativa sem essa condição: Docker Engine nativo no Linux ou dentro do WSL2 (`HOST_OS=linux`) |
 | **Dify** | Dify Open Source License (Apache 2.0 + condições) | ⚠️ | ver abaixo |
 
