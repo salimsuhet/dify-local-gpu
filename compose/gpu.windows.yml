@@ -3,27 +3,21 @@
 # ----------------------------------------------------------------------------
 # Overlay de GPU para Docker Desktop no Windows (backend WSL2).
 #
-# IMPORTANTE: o passthrough de uma GPU ESPECÍFICA por container (device_ids)
-# não é confiável no Docker Desktop hoje — há relatos consistentes de que
-# apenas a primeira GPU é exposta ao WSL2/containers, ou de que device_ids
-# é simplesmente ignorado mesmo quando definido corretamente.
+# No Docker Desktop, `device_ids` não é confiável para fixar um container a
+# uma GPU específica. Por isso, os dois containers recebem TODAS as GPUs
+# (count: all) e o isolamento é feito um nível abaixo, pelo próprio CUDA:
+# CUDA_VISIBLE_DEVICES limita quais placas o processo Ollama enxerga.
+# CUDA_DEVICE_ORDER=PCI_BUS_ID faz o índice bater com o de `nvidia-smi -L`.
 #
-# Por isso, aqui os dois containers recebem acesso a TODAS as GPUs visíveis
-# (capabilities: [gpu], sem device_ids). O isolamento "uma GPU por modelo"
-# deixa de ser garantido pelo Docker e passa a depender do próprio Ollama
-# / do agendamento do driver. Na prática, com 2x GPUs pequenas (6GB) isso
-# tende a funcionar razoavelmente porque cada modelo ainda cabe inteiro em
-# uma única GPU e o driver normalmente não fragmenta um modelo pequeno
-# entre placas — mas não é uma garantia formal como no Linux.
-#
-# Veja docs/windows-gpu-notes.md para detalhes, testes de verificação, e
-# o que fazer se notar os dois modelos competindo pela mesma GPU.
-#
-# Usado automaticamente quando HOST_OS=windows no .env.
+# Confirme o resultado com scripts/check-gpu-affinity.ps1.
+# Detalhes: docs/windows-gpu-notes.md. Usado quando HOST_OS=windows.
 # ============================================================================
 
 services:
   ollama-gpu0:
+    environment:
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+      - CUDA_VISIBLE_DEVICES=${GPU0_DEVICE_INDEX:-0}
     deploy:
       resources:
         reservations:
@@ -33,6 +27,9 @@ services:
               capabilities: [gpu]
 
   ollama-gpu1:
+    environment:
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+      - CUDA_VISIBLE_DEVICES=${GPU1_DEVICE_INDEX:-1}
     deploy:
       resources:
         reservations:

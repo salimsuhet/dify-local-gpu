@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ============================================================================
-# up.sh — sobe Ollama (gpu0/gpu1) + Qdrant escolhendo o overlay de GPU
-# correto (Linux ou Windows) conforme HOST_OS no .env.
+# up.sh — sobe os dois Ollama (GPU0 = código, GPU1 = conversa + embedding)
+# com o overlay de GPU correspondente ao HOST_OS do .env.
 #
 # Uso:
-#   ./scripts/up.sh            (sobe em modo detached)
-#   ./scripts/up.sh --build    (qualquer argumento extra é passado ao compose)
+#   ./scripts/up.sh
+#   ./scripts/up.sh --force-recreate      (argumentos extras vão para o compose)
 # ============================================================================
 set -euo pipefail
 
@@ -20,27 +20,11 @@ fi
 # shellcheck disable=SC1091
 source .env
 
-HOST_OS="${HOST_OS:-linux}"
-
-case "$HOST_OS" in
-  linux)
-    GPU_OVERLAY="compose/gpu.linux.yml"
-    ;;
-  windows)
-    GPU_OVERLAY="compose/gpu.windows.yml"
-    ;;
-  *)
-    echo "ERRO: HOST_OS='${HOST_OS}' inválido no .env. Use 'linux' ou 'windows'."
-    exit 1
-    ;;
+case "${HOST_OS:-linux}" in
+  linux)   GPU_OVERLAY="compose/gpu.linux.yml" ;;
+  windows) GPU_OVERLAY="compose/gpu.windows.yml" ;;
+  *) echo "ERRO: HOST_OS='${HOST_OS}' inválido no .env. Use 'linux' ou 'windows'."; exit 1 ;;
 esac
 
-echo "==> HOST_OS=${HOST_OS} -> usando overlay de GPU: ${GPU_OVERLAY}"
-
-docker compose \
-  --env-file .env \
-  -f docker-compose.base.yml \
-  -f "$GPU_OVERLAY" \
-  up -d "$@"
-
-echo "==> Stack Ollama/Qdrant no ar. Rode ./scripts/check-gpu-affinity.sh para confirmar a alocação de GPU."
+echo "==> HOST_OS=${HOST_OS:-linux} -> overlay de GPU: ${GPU_OVERLAY}"
+docker compose --env-file .env -f docker-compose.base.yml -f "$GPU_OVERLAY" up -d "$@"

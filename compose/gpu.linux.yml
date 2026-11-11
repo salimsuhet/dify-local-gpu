@@ -3,8 +3,8 @@
 # ----------------------------------------------------------------------------
 # Overlay de GPU para Linux com NVIDIA Container Toolkit nativo.
 # Cada container Ollama é fixado a UMA GPU física distinta via device_ids,
-# garantindo isolamento real: o modelo de chat nunca disputa VRAM com o
-# modelo de embedding/rerank.
+# garantindo isolamento real: o modelo de código (GPU0) nunca disputa VRAM
+# com os modelos de conversa e embedding (GPU1).
 #
 # Usado automaticamente quando HOST_OS=linux no .env.
 # ============================================================================

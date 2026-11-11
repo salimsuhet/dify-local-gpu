@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # ============================================================================
-# pull-models.sh — baixa/atualiza os modelos definidos no .env,
-# cada um na instância Ollama correta (GPU0 = chat, GPU1 = embed/rerank).
+# pull-models.sh — baixa os modelos definidos no .env, cada um na
+# instância Ollama certa:
+#   GPU0 (ollama-gpu0): GPU0_CODE_MODEL
+#   GPU1 (ollama-gpu1): GPU1_CHAT_MODEL, GPU1_EMBED_MODEL
 #
-# Rode novamente sempre que mudar GPU0_CHAT_MODEL, GPU1_EMBED_MODEL ou
-# GPU1_RERANK_MODEL no .env.
+# Rode novamente sempre que mudar algum desses modelos no .env.
 # ============================================================================
 set -euo pipefail
 
@@ -14,47 +15,36 @@ cd "$ROOT_DIR"
 # shellcheck disable=SC1091
 source .env
 
-GPU0_URL="http://localhost:${OLLAMA_GPU0_PORT:-11434}"
-GPU1_URL="http://localhost:${OLLAMA_GPU1_PORT:-11435}"
-
 wait_for_ollama() {
-  local url="$1"
-  local name="$2"
-  echo "    Aguardando ${name} responder em ${url}..."
+  echo "    Aguardando $1..."
   for _ in $(seq 1 30); do
-    if curl -s -o /dev/null "${url}/api/tags"; then
-      return 0
-    fi
+    docker exec "$1" ollama list >/dev/null 2>&1 && return 0
     sleep 2
   done
-  echo "ERRO: ${name} não respondeu a tempo em ${url}."
+  echo "ERRO: $1 não respondeu a tempo. Veja: docker logs $1"
   exit 1
 }
 
 pull_model() {
-  local url="$1"
-  local model="$2"
-  local label="$3"
+  local container="$1" model="$2" label="$3"
   if [ -z "$model" ]; then
     echo "    [${label}] nenhum modelo definido, pulando."
     return 0
   fi
-  echo "    [${label}] baixando '${model}'..."
-  curl -s "${url}/api/pull" -d "{\"name\": \"${model}\"}" | tail -n 1
-  echo ""
+  echo "    [${label}] baixando '${model}' em ${container}..."
+  docker exec "$container" ollama pull "$model" \
+    || { echo "ERRO: falha ao baixar '${model}'. Confira o nome em https://ollama.com/library"; exit 1; }
 }
 
-echo "==> GPU0 (${GPU0_URL}) — modelo de chat"
-wait_for_ollama "$GPU0_URL" "ollama-gpu0"
-pull_model "$GPU0_URL" "${GPU0_CHAT_MODEL:-}" "chat"
+echo "==> GPU0 — modelo de código"
+wait_for_ollama ollama-gpu0
+pull_model ollama-gpu0 "${GPU0_CODE_MODEL:-}" "código"
 
-echo "==> GPU1 (${GPU1_URL}) — embedding + rerank"
-wait_for_ollama "$GPU1_URL" "ollama-gpu1"
-pull_model "$GPU1_URL" "${GPU1_EMBED_MODEL:-}" "embedding"
-pull_model "$GPU1_URL" "${GPU1_RERANK_MODEL:-}" "rerank"
+echo "==> GPU1 — conversa + embedding"
+wait_for_ollama ollama-gpu1
+pull_model ollama-gpu1 "${GPU1_CHAT_MODEL:-}" "conversa"
+pull_model ollama-gpu1 "${GPU1_EMBED_MODEL:-}" "embedding"
 
-echo "==> Modelos disponíveis em cada GPU:"
-echo "--- GPU0 (chat) ---"
-curl -s "${GPU0_URL}/api/tags" | python3 -m json.tool 2>/dev/null || true
-echo "--- GPU1 (embed/rerank) ---"
-curl -s "${GPU1_URL}/api/tags" | python3 -m json.tool 2>/dev/null || true
+echo "==> Modelos em disco:"
+echo "--- ollama-gpu0 ---"; docker exec ollama-gpu0 ollama list
+echo "--- ollama-gpu1 ---"; docker exec ollama-gpu1 ollama list

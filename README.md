@@ -1,189 +1,181 @@
-# Dify + Ollama Local GPU Stack
+# Assistente de Código Local — Dify + Ollama em 2 GPUs
 
-Stack 100% local para rodar o [Dify](https://github.com/langgenius/dify) (plataforma de agentes/RAG) com modelos servidos via [Ollama](https://ollama.com), com afinidade de GPU configurável por modelo através do `.env`.
+Stack 100% local para rodar um **assistente de programação** com o [Dify](https://github.com/langgenius/dify) como interface e o [Ollama](https://ollama.com) servindo os modelos, um por GPU. Pensado para workstations com duas GPUs pequenas (ex: 2x RTX A2000 6 GB) e para uso em laboratório de ensino.
 
-Pensado para workstations com múltiplas GPUs pequenas (ex: 2x RTX A2000 6GB), onde você quer:
+## Premissas do projeto
 
-- Um LLM de chat dedicado a uma GPU
-- Um modelo de embeddings (+ opcionalmente reranker) dedicado à outra GPU
-- Tudo acessível apenas em `localhost`, sem expor nada à rede externa
-- Trocar qual modelo vai em qual GPU só editando o `.env`, sem tocar em compose files
-- **Funcionar tanto em Linux quanto em Windows (Docker Desktop), escolhido por uma única variável no `.env`**
-
-## Suporte a Linux e Windows
-
-O projeto detecta o sistema operacional através da variável `HOST_OS` no `.env` (`linux` ou `windows`) e seleciona automaticamente o overlay de GPU correto:
-
-| | Linux (nativo ou Docker dentro do WSL2) | Windows (Docker Desktop) |
-|---|---|---|
-| Overlay usado | `compose/gpu.linux.yml` | `compose/gpu.windows.yml` |
-| Isolamento de GPU por container | Garantido (`device_ids` fixo por placa) | **Não garantido** — limitação conhecida do Docker Desktop/WSL2 (veja abaixo) |
-| Scripts | `scripts/*.sh` (bash) | `scripts/*.ps1` (PowerShell) — ou os mesmos `.sh` se você rodar dentro do WSL2 |
-
-> **Importante sobre Windows:** o passthrough de uma GPU *específica* para um container não é confiável hoje no Docker Desktop — há relatos consistentes de `device_ids` sendo ignorado ou de apenas a primeira GPU ficar visível para containers, mesmo com duas instaladas. Por isso, no modo `windows` os dois containers Ollama recebem acesso a **todas** as GPUs visíveis, e é o próprio driver/Ollama (não o Docker) quem decide onde cada modelo carrega. Na prática, com modelos pequenos isso costuma funcionar bem, mas sem garantia formal. Detalhes completos e como verificar o que de fato aconteceu: `docs/windows-gpu-notes.md`.
+1. **Foco em assistente de código.** O modelo padrão e a documentação priorizam geração, explicação e revisão de código. A troca por outros modelos continua aberta (um comando + cadastro no Dify).
+2. **Tudo local.** Nenhum prompt, código ou documento sai da máquina. Os serviços escutam só em `localhost`.
+3. **Licenças abertas e permissivas.** Cada componente e cada modelo recomendado tem licença verificada em [`docs/licencas.md`](docs/licencas.md) — incluindo a única ressalva do stack (a licença do Dify).
+4. **Configuração só pelo `.env`.** Qual modelo vai em qual GPU, portas e contexto se mudam no `.env`, sem editar compose.
 
 ## Arquitetura
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     localhost                             │
-│                                                             │
-│  ┌──────────┐   ┌──────────┐   ┌──────────────────────┐  │
-│  │  Dify    │   │  Dify    │   │   Vector Store        │  │
-│  │  Web     │──▶│  API/    │──▶│   (Qdrant)            │  │
-│  │  :80     │   │  Worker  │   │   :6333               │  │
-│  └──────────┘   └────┬─────┘   └──────────────────────┘  │
-│                       │                                    │
-│         ┌─────────────┴─────────────┐                     │
-│         ▼                           ▼                     │
-│  ┌─────────────────┐       ┌─────────────────┐            │
-│  │ ollama-gpu0      │       │ ollama-gpu1      │            │
-│  │ :11434           │       │ :11435           │            │
-│  │ GPU 0 (A2000 #1) │       │ GPU 1 (A2000 #2) │            │
-│  │ Linux: fixo       │       │ Linux: fixo       │            │
-│  │ Windows: melhor   │       │ Windows: melhor   │            │
-│  │ esforço           │       │ esforço           │            │
-│  │                  │       │                  │            │
-│  │ GPU0_CHAT_MODEL  │       │ GPU1_EMBED_MODEL │            │
-│  │ (definido no     │       │ GPU1_RERANK_MODEL│            │
-│  │  .env)           │       │ (definido no     │            │
-│  │                  │       │  .env)           │            │
-│  └──────────────────┘       └──────────────────┘            │
-└─────────────────────────────────────────────────────────┘
+                         Navegador (localhost)
+                                 │
+                    ┌────────────▼─────────────┐
+                    │  Dify  (web, api, worker, │
+                    │  plugin_daemon, ...)      │
+                    │  Postgres + pgvector (RAG)│
+                    └──────┬─────────────┬──────┘
+           rede dify-local-gpu-net       │
+                 ┌─────────▼───┐   ┌─────▼──────────────┐
+                 │ ollama-gpu0 │   │ ollama-gpu1        │
+                 │ GPU 0       │   │ GPU 1              │
+                 │ CÓDIGO      │   │ CONVERSA + EMBED   │
+                 │ qwen2.5-    │   │ qwen2.5:7b         │
+                 │ coder:7b    │   │ nomic-embed-text   │
+                 │ ctx 8192    │   │ ctx 4096           │
+                 └─────────────┘   └────────────────────┘
 ```
+
+- **GPU 0 — modelo de código**, sozinho na placa para ter a maior janela de contexto possível (código consome contexto rápido).
+- **GPU 1 — modelo de conversa** (interpretar pedidos, rotear, explicar conceitos) **+ embedding** para as Bases de Conhecimento.
+- **pgvector** (dentro do próprio Dify) guarda os vetores do RAG — não há banco vetorial separado.
+- Os dois modelos ficam carregados ao mesmo tempo: alternar entre conversa e código não descarrega nada da VRAM.
 
 ## Pré-requisitos
 
-### Linux
-- Driver NVIDIA instalado (`nvidia-smi` funcionando)
-- Docker + Docker Compose v2.24+
-- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) instalado e configurado (`nvidia-ctk runtime configure --runtime=docker`)
+| | Windows (Docker Desktop) | Linux (ou Docker nativo dentro do WSL2) |
+|---|---|---|
+| Driver | NVIDIA atualizado no Windows | NVIDIA (`nvidia-smi` funcionando) |
+| Docker | Docker Desktop com backend **WSL2** | Docker + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) |
+| Compose | v2.35+ (exigido pelo Dify 1.19) | v2.35+ |
+| Scripts | `scripts\*.ps1` (PowerShell) | `scripts/*.sh` (bash) |
+| `HOST_OS` no `.env` | `windows` | `linux` |
 
-### Windows
-- Driver NVIDIA atualizado no Windows host
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) com backend **WSL2** ativado
-- WSL2 atualizado (`wsl --update`)
-- Recomendado: rodar os scripts `.sh` deste repositório de dentro de uma distro WSL2 (ex: Ubuntu) — é o caminho mais testado. Alternativamente, use os scripts `.ps1` equivalentes direto no PowerShell.
+Ambos: `git`, ~25 GB livres em disco (imagens do Dify + ~10 GB de modelos), internet na primeira execução.
 
-Ambos: ~20GB de disco livre para imagens + modelos (cada modelo 7-8B quantizado ocupa 4-5GB).
+Confira que as duas GPUs aparecem:
 
-Verifique que as duas GPUs aparecem:
-
-```bash
+```
 nvidia-smi -L
 # GPU 0: NVIDIA RTX A2000 (UUID: ...)
 # GPU 1: NVIDIA RTX A2000 (UUID: ...)
 ```
 
-## Setup rápido
+## Instalação
 
-### Linux (ou Windows via WSL2)
-
-```bash
-git clone <este-repositorio> dify-local-gpu
-cd dify-local-gpu
-cp .env.example .env
-# edite .env e confirme HOST_OS=linux (ou windows, se estiver usando Docker Desktop por dentro do WSL2)
-./scripts/bootstrap.sh
-```
-
-### Windows (PowerShell, sem WSL2)
+**Windows (PowerShell):**
 
 ```powershell
 git clone <este-repositorio> dify-local-gpu
 cd dify-local-gpu
-Copy-Item .env.example .env
-# edite .env e confirme HOST_OS=windows
-.\scripts\bootstrap.ps1
+.\scripts\bootstrap.ps1        # cria o .env com HOST_OS=windows se não existir
 ```
 
-O bootstrap faz:
-
-1. Clona o repositório oficial do Dify em `./dify/`
-2. Lê `HOST_OS` do `.env` e escolhe o overlay de GPU correspondente
-3. Sobe Ollama nas duas GPUs (`scripts/up.sh` / `up.ps1`)
-4. Faz o `pull` dos modelos definidos no `.env`
-5. Sobe o Dify apontando para os dois Ollama locais
-
-Depois disso, acesse `http://localhost/install` para finalizar a configuração inicial do Dify (criar conta admin).
-
-## Configurando os modelos por GPU (`.env`)
-
-Edite o arquivo `.env` na raiz do projeto. As variáveis relevantes:
+**Linux / WSL2:**
 
 ```bash
-# Sistema operacional do host — define qual overlay de GPU é usado
-HOST_OS=linux   # ou "windows"
-
-# GPU física que cada container Ollama deve usar (apenas relevante em HOST_OS=linux)
-GPU0_DEVICE_INDEX=0
-GPU1_DEVICE_INDEX=1
-
-# Modelo de CHAT (LLM principal) — vai na GPU0
-GPU0_CHAT_MODEL=qwen2.5:7b-instruct-q4_K_M
-
-# Modelos de EMBEDDING e RERANK — vão na GPU1
-GPU1_EMBED_MODEL=nomic-embed-text
-GPU1_RERANK_MODEL=bge-reranker-v2-m3
-
-# Portas expostas em localhost para cada instância Ollama
-OLLAMA_GPU0_PORT=11434
-OLLAMA_GPU1_PORT=11435
-
-# Janela de contexto (ajuste fino opcional)
-OLLAMA_GPU0_NUM_CTX=4096
-OLLAMA_GPU1_NUM_CTX=2048
+git clone <este-repositorio> dify-local-gpu
+cd dify-local-gpu
+cp .env.example .env           # HOST_OS=linux já é o padrão
+./scripts/bootstrap.sh
 ```
 
-Para trocar o modelo de chat, por exemplo para Llama 3.1 8B:
+O bootstrap:
+
+1. Clona o Dify oficial (última release) em `./dify/`
+2. Configura o Dify: **pgvector** como banco vetorial, senhas/tokens aleatórios, porta HTTP e um `docker-compose.override.yaml` que liga o Dify à rede dos Ollama
+3. Sobe `ollama-gpu0` e `ollama-gpu1`, cada um preso à sua GPU
+4. Baixa os modelos definidos no `.env` (~10 GB na primeira vez)
+5. Sobe o Dify
+
+Depois, siga **[`docs/dify-setup.md`](docs/dify-setup.md)**: criar a conta admin em `http://localhost/install`, instalar o plugin Ollama, cadastrar os modelos e criar o app "Assistente de Código" (com prompt de sistema pronto).
+
+## Configuração (`.env`)
 
 ```bash
-./scripts/switch-model.sh gpu0 llama3.1:8b-instruct-q4_K_M     # Linux/WSL2
-.\scripts\switch-model.ps1 gpu0 llama3.1:8b-instruct-q4_K_M    # Windows PowerShell
+HOST_OS=windows                                   # ou linux
+
+GPU0_CODE_MODEL=qwen2.5-coder:7b-instruct-q4_K_M  # GPU 0: código
+OLLAMA_GPU0_NUM_CTX=8192
+
+GPU1_CHAT_MODEL=qwen2.5:7b-instruct-q4_K_M        # GPU 1: conversa (opcional)
+GPU1_EMBED_MODEL=nomic-embed-text                 # GPU 1: embedding
+OLLAMA_GPU1_NUM_CTX=4096
 ```
 
-Não é necessário editar nenhum arquivo de compose — a alocação de GPU e o modelo carregado são inteiramente dirigidos pelo `.env`.
+No Dify, a Base URL é sempre a mesma, em qualquer sistema:
 
-## Verificando a afinidade de GPU
+| Papel | Base URL no Dify |
+|---|---|
+| Código (GPU 0) | `http://ollama-gpu0:11434` |
+| Conversa e embedding (GPU 1) | `http://ollama-gpu1:11434` |
 
-```bash
-./scripts/check-gpu-affinity.sh     # Linux/WSL2
-.\scripts\check-gpu-affinity.ps1    # Windows PowerShell
+Do host (scripts, testes, extensões de IDE), as mesmas instâncias ficam em `http://localhost:11434` e `http://localhost:11435`.
+
+## Trocando de modelo
+
+```powershell
+.\scripts\switch-model.ps1 code  qwen2.5-coder:1.5b-instruct-q4_K_M   # Windows
+./scripts/switch-model.sh  chat  mistral:7b-instruct-q4_K_M           # Linux
 ```
 
-Isso mostra, via `nvidia-smi`, qual processo Ollama está em qual GPU e quanta VRAM está sendo usada. No Linux o resultado deve mostrar isolamento exato; no Windows, use para confirmar como o driver de fato distribuiu os modelos (veja `docs/windows-gpu-notes.md`).
+Papéis: `code` (GPU 0), `chat` e `embed` (GPU 1). Depois cadastre o novo modelo no Dify. Antes de adotar um modelo, confira a licença em [`docs/licencas.md`](docs/licencas.md) e o consumo de VRAM em [`docs/model-reference.md`](docs/model-reference.md).
 
-## Conectando os modelos ao Dify
+## Verificando as GPUs
 
-No painel do Dify (`Configurações > Provedores de Modelo`), adicione dois provedores **Ollama** — um para chat (GPU0), outro para embedding/rerank (GPU1). A Base URL correta depende do seu `HOST_OS`; veja a tabela completa em `docs/model-providers.md`.
+```powershell
+.\scripts\check-gpu-affinity.ps1     # Windows
+./scripts/check-gpu-affinity.sh      # Linux
+```
+
+Mostra a GPU (endereço PCI) que cada Ollama enxerga, a VRAM por placa e, para cada modelo carregado, se ele está **100% na GPU** ou se parte foi para a CPU (sinal de contexto grande demais).
+
+## Comandos do dia a dia (`make`)
+
+O `Makefile` funciona igual no Windows e no Linux: detecta o sistema e chama o script `.ps1` ou `.sh` correspondente.
+
+| Comando | O que faz |
+|---|---|
+| `make` | lista os comandos |
+| `make setup` | instalação completa (bootstrap) |
+| `make up` / `make down` | sobe os Ollama e o Dify / para tudo (dados preservados) |
+| `make restart` | `down` + `up` |
+| `make status` | containers, modelos carregados (`100% GPU`?) e VRAM por placa |
+| `make gpu` | diagnóstico detalhado de GPU |
+| `make test` | teste de ponta a ponta: serviços, rede e carga paralela nas duas GPUs |
+| `make pull` | baixa os modelos definidos no `.env` |
+| `make switch ROLE=code MODEL=<modelo>` | troca um modelo (`ROLE`: `code`, `chat`, `embed`) |
+| `make logs S=api` | logs de um serviço do Dify (`api`, `worker`, `plugin_daemon`...) |
+| `make ollama-logs` | logs dos dois Ollama |
+
+**Instalando o make:**
+- Linux / WSL2: `sudo apt install make`
+- Windows: `winget install ezwinports.make` (ou GnuWin32 Make 3.81+). Abra um terminal novo depois de instalar.
+
+Sem make, os scripts continuam funcionando diretamente (`.\scripts\*.ps1` ou `./scripts/*.sh`), e os comandos equivalentes estão no próprio `Makefile`.
 
 ## Estrutura do repositório
 
 ```
 dify-local-gpu/
-├── docker-compose.base.yml       # Serviços Ollama/Qdrant SEM config de GPU
+├── Makefile                    # atalhos: make setup, up, down, status, switch...
+├── docker-compose.base.yml     # ollama-gpu0 e ollama-gpu1, sem config de GPU
 ├── compose/
-│   ├── gpu.linux.yml             # Overlay: 1 GPU dedicada por container (Linux)
-│   └── gpu.windows.yml           # Overlay: GPUs visíveis a ambos (Windows/Docker Desktop)
-├── .env.example                  # Template de configuração (HOST_OS, modelos, portas, GPUs)
-├── scripts/
-│   ├── bootstrap.sh / .ps1       # Setup inicial completo
-│   ├── up.sh / .ps1              # Sobe Ollama+Qdrant com o overlay de GPU correto
-│   ├── pull-models.sh / .ps1     # Baixa/atualiza modelos definidos no .env
-│   ├── check-gpu-affinity.sh / .ps1  # Confirma qual processo está em qual GPU
-│   └── switch-model.sh / .ps1    # Troca modelo de uma GPU específica em runtime
+│   ├── gpu.linux.yml           # isolamento por device_ids (Docker)
+│   └── gpu.windows.yml         # isolamento por CUDA_VISIBLE_DEVICES (Docker Desktop)
+├── .env.example
+├── apps/
+│   └── assistente-de-codigo.yml # app pronto para importar no Dify (Estúdio → Importar DSL)
+├── scripts/                    # bootstrap, up, pull-models, switch-model, check-gpu-affinity (.sh e .ps1)
 ├── docs/
-│   ├── model-reference.md        # Modelos recomendados por faixa de VRAM (6GB)
-│   ├── model-providers.md        # Como cadastrar os providers Ollama no Dify
-│   ├── windows-gpu-notes.md      # Limitações de GPU passthrough no Docker Desktop
-│   └── troubleshooting.md        # Problemas comuns (OOM, conectividade, reset)
-└── dify/                         # (gerado pelo bootstrap — clone oficial do Dify)
+│   ├── dify-setup.md           # configurar o Dify e criar o assistente de código
+│   ├── model-reference.md      # modelos de código/conversa/embedding que cabem em 6 GB
+│   ├── licencas.md             # licença de cada componente e modelo; uso em universidade
+│   ├── windows-gpu-notes.md    # como o isolamento de GPU funciona no Docker Desktop
+│   └── troubleshooting.md
+└── dify/                       # gerado pelo bootstrap (clone oficial, fora do git)
 ```
 
-## Por que dois containers Ollama em vez de um?
+## Limites desta configuração
 
-Um único processo Ollama escolhe automaticamente em qual GPU carregar cada modelo, e pode tentar fazer split de um modelo grande entre as duas — o que não é o que você quer aqui. Rodando duas instâncias Ollama separadas, no Linux conseguimos fixar cada uma a uma GPU física diferente via `device_ids`, garantindo isolamento real. No Windows essa garantia não existe ao nível do Docker (ver seção acima e `docs/windows-gpu-notes.md`), mas a separação em dois containers ainda ajuda a organizar a configuração e os logs por responsabilidade (chat vs. embedding/rerank).
+- **Qualidade:** modelos de 7B são bons para funções, scripts, explicações, testes e revisão de trechos. Ficam bem abaixo de modelos de nuvem em tarefas grandes (refatorar um projeto inteiro, arquitetura).
+- **Concorrência:** com `NUM_PARALLEL=1`, cada GPU atende uma requisição por vez; as demais esperam na fila. Na prática, 2 a 5 pessoas usando ao mesmo tempo com espera aceitável.
+- **Rede:** tudo está preso a `127.0.0.1`. Para atender outras máquinas (ex: alunos de um laboratório), exponha **só o Dify**, com HTTPS e contas individuais — veja a seção de uso institucional em [`docs/licencas.md`](docs/licencas.md).
 
-## Licenças
+## Licença
 
-Este repositório é apenas o "wrapper" de infraestrutura (compose files, scripts, documentação). O Dify é licenciado pela LangGenius, Inc. sob a [Dify Open Source License](https://github.com/langgenius/dify/blob/main/LICENSE) (Apache 2.0 com adendos). Os modelos referenciados em `docs/model-reference.md` têm suas próprias licenças (Llama 3.1 Community License, Apache 2.0 para Qwen2.5, MIT para Nomic Embed, etc) — confira antes de uso comercial.
+Este repositório contém apenas a infraestrutura (compose, scripts, documentação). O Dify, o Ollama e cada modelo têm suas próprias licenças — resumo e implicações em [`docs/licencas.md`](docs/licencas.md).

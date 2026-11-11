@@ -1,9 +1,10 @@
-# ============================================================================
-# pull-models.ps1 — baixa/atualiza os modelos definidos no .env,
-# cada um na instância Ollama correta (GPU0 = chat, GPU1 = embed/rerank).
+﻿# ============================================================================
+# pull-models.ps1 — baixa os modelos definidos no .env, cada um na
+# instância Ollama certa:
+#   GPU0 (ollama-gpu0): GPU0_CODE_MODEL
+#   GPU1 (ollama-gpu1): GPU1_CHAT_MODEL, GPU1_EMBED_MODEL
 #
-# Rode novamente sempre que mudar GPU0_CHAT_MODEL, GPU1_EMBED_MODEL ou
-# GPU1_RERANK_MODEL no .env.
+# Rode novamente sempre que mudar algum desses modelos no .env.
 # ============================================================================
 
 $ErrorActionPreference = "Stop"
@@ -12,54 +13,41 @@ Set-Location $RootDir
 
 $envVars = @{}
 Get-Content ".env" | ForEach-Object {
-    if ($_ -match '^\s*([^#][^=]*)=(.*)$') {
-        $envVars[$matches[1].Trim()] = $matches[2].Trim()
-    }
+    if ($_ -match '^\s*([^#=\s][^=]*)=(.*)$') { $envVars[$matches[1].Trim()] = $matches[2].Trim() }
 }
 
-function Get-EnvOrDefault($key, $default) {
-    if ($envVars.ContainsKey($key) -and $envVars[$key]) { return $envVars[$key] }
-    return $default
-}
-
-$Gpu0Url = "http://localhost:$(Get-EnvOrDefault 'OLLAMA_GPU0_PORT' '11434')"
-$Gpu1Url = "http://localhost:$(Get-EnvOrDefault 'OLLAMA_GPU1_PORT' '11435')"
-
-function Wait-ForOllama($url, $name) {
-    Write-Host "    Aguardando $name responder em $url..."
+function Wait-ForOllama([string]$Container) {
+    Write-Host "    Aguardando $Container..."
+    # No PowerShell 5.1, stderr redirecionado de comando nativo vira erro
+    # terminante sob "Stop"; aqui a falha é esperada enquanto o Ollama sobe.
+    $ErrorActionPreference = "Continue"
     for ($i = 0; $i -lt 30; $i++) {
-        try {
-            Invoke-WebRequest -Uri "$url/api/tags" -UseBasicParsing -TimeoutSec 3 | Out-Null
-            return
-        } catch {
-            Start-Sleep -Seconds 2
-        }
+        docker exec $Container ollama list *> $null
+        if ($LASTEXITCODE -eq 0) { return }
+        Start-Sleep -Seconds 2
     }
-    Write-Error "$name não respondeu a tempo em $url."
-    exit 1
+    throw "$Container não respondeu a tempo. Veja: docker logs $Container"
 }
 
-function Pull-Model($url, $model, $label) {
-    if (-not $model) {
-        Write-Host "    [$label] nenhum modelo definido, pulando."
+function Get-Model([string]$Container, [string]$Model, [string]$Label) {
+    if (-not $Model) {
+        Write-Host "    [$Label] nenhum modelo definido, pulando."
         return
     }
-    Write-Host "    [$label] baixando '$model'..."
-    $body = @{ name = $model } | ConvertTo-Json
-    Invoke-RestMethod -Uri "$url/api/pull" -Method Post -Body $body -ContentType "application/json" | Out-Null
+    Write-Host "    [$Label] baixando '$Model' em $Container..."
+    docker exec $Container ollama pull $Model
+    if ($LASTEXITCODE -ne 0) { throw "Falha ao baixar '$Model'. Confira o nome em https://ollama.com/library" }
 }
 
-Write-Host "==> GPU0 ($Gpu0Url) — modelo de chat"
-Wait-ForOllama $Gpu0Url "ollama-gpu0"
-Pull-Model $Gpu0Url (Get-EnvOrDefault 'GPU0_CHAT_MODEL' '') "chat"
+Write-Host "==> GPU0 — modelo de código"
+Wait-ForOllama "ollama-gpu0"
+Get-Model "ollama-gpu0" $envVars["GPU0_CODE_MODEL"] "código"
 
-Write-Host "==> GPU1 ($Gpu1Url) — embedding + rerank"
-Wait-ForOllama $Gpu1Url "ollama-gpu1"
-Pull-Model $Gpu1Url (Get-EnvOrDefault 'GPU1_EMBED_MODEL' '') "embedding"
-Pull-Model $Gpu1Url (Get-EnvOrDefault 'GPU1_RERANK_MODEL' '') "rerank"
+Write-Host "==> GPU1 — conversa + embedding"
+Wait-ForOllama "ollama-gpu1"
+Get-Model "ollama-gpu1" $envVars["GPU1_CHAT_MODEL"] "conversa"
+Get-Model "ollama-gpu1" $envVars["GPU1_EMBED_MODEL"] "embedding"
 
-Write-Host "==> Modelos disponíveis em cada GPU:"
-Write-Host "--- GPU0 (chat) ---"
-try { (Invoke-RestMethod -Uri "$Gpu0Url/api/tags") | ConvertTo-Json -Depth 5 } catch {}
-Write-Host "--- GPU1 (embed/rerank) ---"
-try { (Invoke-RestMethod -Uri "$Gpu1Url/api/tags") | ConvertTo-Json -Depth 5 } catch {}
+Write-Host "==> Modelos em disco:"
+Write-Host "--- ollama-gpu0 ---"; docker exec ollama-gpu0 ollama list
+Write-Host "--- ollama-gpu1 ---"; docker exec ollama-gpu1 ollama list

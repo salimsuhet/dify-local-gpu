@@ -1,68 +1,67 @@
-# Notas sobre GPU no Windows (Docker Desktop / WSL2)
+# GPU no Windows (Docker Desktop / WSL2)
 
-Este documento explica por que o comportamento de alocação de GPU é diferente no Windows comparado ao Linux, e o que fazer a respeito.
+## Resumo
 
-## O problema, resumido
-
-No Linux com NVIDIA Container Toolkit, é possível fixar um container Docker a uma GPU física específica usando `device_ids` no compose — é exatamente isso que `compose/gpu.linux.yml` faz, garantindo que o container `ollama-gpu0` só veja a GPU 0 e o `ollama-gpu1` só veja a GPU 1.
-
-No Docker Desktop para Windows (que usa WSL2 por baixo para o passthrough de GPU), essa garantia não existe na prática hoje:
-
-- Há relatos confirmados de usuários onde alterar `device_ids` no compose não tem efeito algum — o container continua vendo apenas a primeira GPU do sistema, mesmo especificando o índice da segunda.
-- Há também relatos de que, com múltiplas GPUs físicas, apenas uma delas é reconhecida dentro do WSL2, mesmo com ambas funcionando corretamente no Windows nativo.
-- O suporte oficial documentado pela Docker para GPU no Windows é baseado em GPU Paravirtualization (GPU-PV) — uma camada adicional de virtualização que não existe no Linux nativo, e que historicamente tem comportamento menos granular para isolar GPUs individuais entre containers.
-
-## O que este repositório faz por causa disso
-
-Quando `HOST_OS=windows` no `.env`, o overlay `compose/gpu.windows.yml` é usado em vez do `compose/gpu.linux.yml`. A diferença:
+No Docker Desktop, a forma "Docker" de fixar um container a uma GPU (`device_ids`) não é confiável. Este projeto contorna isso isolando as GPUs **um nível abaixo, no CUDA**, e o resultado é verificável.
 
 | | Linux (`gpu.linux.yml`) | Windows (`gpu.windows.yml`) |
 |---|---|---|
-| Configuração | `device_ids: ["0"]` / `["1"]` | `count: all` (sem device_ids) |
-| Isolamento | Garantido pelo Docker — cada container só vê 1 GPU | Não garantido — ambos containers veem todas as GPUs |
-| Quem decide onde carregar o modelo | O Docker, antes do container iniciar | O driver NVIDIA / Ollama, em tempo de execução |
+| O que o container recebe | só a GPU do `device_ids` | todas as GPUs (`count: all`) |
+| Quem isola | o Docker / NVIDIA Container Toolkit | o CUDA, via `CUDA_VISIBLE_DEVICES` |
+| Ordem dos índices | a do `nvidia-smi -L` | igual, graças a `CUDA_DEVICE_ORDER=PCI_BUS_ID` |
+| Resultado | 1 GPU por Ollama | 1 GPU por Ollama |
 
-Na prática, com duas GPUs de 6GB e modelos pequenos (7B chat + embedding leve), isso costuma funcionar razoavelmente bem mesmo sem a garantia formal: o driver tende a alocar cada processo Ollama em uma GPU com espaço livre. Mas não é uma garantia — é um comportamento observado, não configurado.
+## Por que `device_ids` não basta no Docker Desktop
 
-## Como verificar o que de fato aconteceu
+O Docker Desktop expõe as GPUs aos containers por paravirtualização (GPU-PV, via `/dev/dxg` do WSL2), e não pelo mecanismo do NVIDIA Container Toolkit do Linux. Há relatos consistentes de `device_ids` sendo ignorado — o container vê todas as placas, ou só a primeira.
 
-Depois de subir o stack, rode:
+Mas, quando o container enxerga todas as GPUs, o próprio runtime CUDA respeita `CUDA_VISIBLE_DEVICES`: o processo Ollama só "vê" a placa indicada. É isso que o overlay faz:
+
+```yaml
+ollama-gpu0:
+  environment:
+    - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    - CUDA_VISIBLE_DEVICES=${GPU0_DEVICE_INDEX:-0}
+```
+
+`CUDA_DEVICE_ORDER=PCI_BUS_ID` é importante com duas placas iguais: sem ele, o CUDA ordena por "mais rápida primeiro" e o índice pode não corresponder ao do `nvidia-smi`.
+
+## Como verificar
 
 ```powershell
 .\scripts\check-gpu-affinity.ps1
 ```
 
-ou, dentro do WSL2:
+Cada Ollama deve reportar **uma** GPU e com **endereços PCI diferentes**. Exemplo real (2x RTX A2000):
 
-```bash
-./scripts/check-gpu-affinity.sh
+```
+==> ollama-gpu0: CUDA_VISIBLE_DEVICES=0
+    GPU detectada pelo Ollama: ... description="NVIDIA RTX A2000" pci_id=0000:17:00.0 total="6.0 GiB" available="5.0 GiB"
+==> ollama-gpu1: CUDA_VISIBLE_DEVICES=1
+    GPU detectada pelo Ollama: ... description="NVIDIA RTX A2000" pci_id=0000:65:00.0 total="6.0 GiB" available="5.0 GiB"
 ```
 
-Olhe a saída de `nvidia-smi --query-gpu=...`. Se você ver VRAM consumida nas duas GPUs (uma com ~5GB do modelo de chat, outra com menos de 2GB do embedding/rerank), o isolamento aconteceu na prática, mesmo sem ser garantido pelo compose. Se toda a VRAM estiver concentrada em uma única GPU, os dois modelos foram colocados juntos.
+Com modelos carregados, `nvidia-smi` deve mostrar VRAM ocupada nas duas placas, e `ollama ps` deve mostrar `100% GPU` em cada modelo.
 
-## Se os dois modelos caírem na mesma GPU
+## VRAM disponível no Windows
 
-Com modelos pequenos (7B + embedding leve), a soma ainda cabe em 6GB, então mesmo nesse cenário o stack deve continuar funcional — só não há mais separação de carga entre as placas. Opções, em ordem de preferência:
+O driver do Windows (WDDM) reserva parte da memória de cada placa: numa A2000 de 6 GB, o Ollama vê **5,0 GiB disponíveis**. Por isso o compose ativa flash attention e KV cache em 8 bits, e o contexto padrão do modelo de código é 8192. Se um monitor estiver ligado a uma das placas, ela terá ainda menos VRAM livre — prefira colocar o modelo de conversa (o menor consumo de contexto) nessa placa, trocando os índices no `.env`.
 
-1. **Atualize o driver NVIDIA e o Docker Desktop.** O suporte a múltiplas GPUs no WSL2 tem melhorado em versões recentes; parte dos relatos de "só uma GPU visível" são de versões de driver mais antigas.
-2. **Rode os dois containers Ollama fora do Docker, diretamente no Windows ou no WSL2**, usando `CUDA_VISIBLE_DEVICES` no processo Ollama nativo (fora de container) — isso contorna a camada de paravirtualização do Docker Desktop e usa o isolamento de GPU do driver CUDA diretamente, que funciona corretamente fora de containers.
-3. **Aceite o comportamento atual.** Se os dois modelos cabem juntos em 6-8GB combinados, o impacto prático é apenas: sem isolamento garantido, mas sem erro funcional.
+## Se o isolamento falhar
 
-## Por que não usamos WSL2 com passthrough "tradicional" (sem Docker Desktop)
+Sintoma: os dois Ollama mostram o mesmo `pci_id`, ou um deles mostra duas GPUs.
 
-É possível instalar Docker diretamente dentro de uma distro WSL2 (sem o Docker Desktop como camada intermediária) e, nesse caso, o comportamento de GPU se aproxima mais do Linux nativo, já que o WSL2 expõe as GPUs via `/dev/dxg` direto para o driver dentro da distro. Se você quiser esse caminho:
+1. Confirme os índices com `nvidia-smi -L` e ajuste `GPU0_DEVICE_INDEX` / `GPU1_DEVICE_INDEX` no `.env`.
+2. Recrie os containers: `.\scripts\up.ps1 --force-recreate`.
+3. Atualize o driver NVIDIA e o Docker Desktop.
+4. Alternativa definitiva: usar Docker Engine **dentro do WSL2**, sem Docker Desktop, com NVIDIA Container Toolkit — aí o comportamento é o do Linux, e você usa `HOST_OS=linux` e os scripts `.sh`:
 
-```bash
-# Dentro do WSL2 (Ubuntu), SEM Docker Desktop:
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
-# Instale o NVIDIA Container Toolkit normalmente, como no Linux:
-# https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
-```
+   ```bash
+   # dentro do Ubuntu no WSL2 (sem Docker Desktop instalado/ativo)
+   curl -fsSL https://get.docker.com | sh
+   sudo usermod -aG docker $USER
+   # instale o NVIDIA Container Toolkit:
+   # https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
+   ```
 
-Nesse cenário, defina `HOST_OS=linux` no `.env` (mesmo estando "dentro" do Windows) e use `compose/gpu.linux.yml` — porque tecnicamente, da perspectiva do Docker, esse setup É Linux. A diferença do que descrevemos acima é justamente não usar o Docker Desktop como intermediário.
-
-## Resumo da recomendação
-
-- **Quer simplicidade e já usa Docker Desktop:** `HOST_OS=windows`, aceite a falta de garantia formal de isolamento, valide com `check-gpu-affinity.ps1`.
-- **Quer isolamento garantido por GPU, igual ao Linux:** instale Docker diretamente dentro do WSL2 (sem Docker Desktop), use `HOST_OS=linux`, e rode os scripts `.sh` de dentro da distro.
+   Esse caminho também evita a condição de licença comercial do Docker Desktop (ver `licencas.md`).
